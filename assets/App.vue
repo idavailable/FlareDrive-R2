@@ -269,8 +269,15 @@ export default {
       this.folders = [];
       this.loading = true;
       fetch(`/api/children/${this.cwd}`)
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) {
+            this.loading = false;
+            return null;
+          }
+          return res.json();
+        })
         .then((files) => {
+          if (!files) return;
           this.files = files.value;
           if (this.order) {
             this.files.sort((a, b) => {
