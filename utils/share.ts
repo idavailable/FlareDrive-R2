@@ -37,6 +37,7 @@ export async function verify_share(context, path) {
   const sign = url.searchParams.get("s");
   const exp = url.searchParams.get("e");
   const password = url.searchParams.get("pw") || "";
+  const id = url.searchParams.get("id");
   if (!sign || !exp) return false;
   if (Date.now() / 1000 > Number(exp)) return false;
   const expected = await make_share_sign(context.env, path, exp, password);
@@ -46,5 +47,15 @@ export async function verify_share(context, path) {
   for (let i = 0; i < expected.length; i++) {
     diff |= expected.charCodeAt(i) ^ sign.charCodeAt(i);
   }
-  return diff === 0;
+  if (diff !== 0) return false;
+
+  // 绑定了 SHARE_KV 时，分享必须存在对应记录（撤销 = 删除记录，立即失效）
+  const kv = context.env["SHARE_KV"];
+  if (kv) {
+    if (!id) return false;
+    const kvKey = `share:${id}:${exp}:${encodeURIComponent(path)}`;
+    const stored = await kv.get(kvKey);
+    if (stored === null) return false;
+  }
+  return true;
 }

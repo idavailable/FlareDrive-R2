@@ -41,7 +41,7 @@
           </svg>
         </button>
         <Menu v-model="showMenu"
-          :items="[{ text: '按照名称排序A-Z' }, { text: '按照大小递增排序' }, { text: '按照大小递减排序' }, { text: '粘贴文件到网盘' }]"
+          :items="[{ text: '按照名称排序A-Z' }, { text: '按照大小递增排序' }, { text: '按照大小递减排序' }, { text: '粘贴文件到网盘' }, { text: '我的分享' }]"
           @click="onMenuClick" />
       </div>
     </div>
@@ -182,6 +182,29 @@
         </li>
       </ul>
     </Dialog>
+    <Dialog v-model="showShareManager">
+      <div style="min-width: 420px; max-width: 90vw; max-height: 70vh; overflow-y: auto; padding: 6px;">
+        <h3 style="margin: 4px 0 12px 0; text-align: center;">我的分享</h3>
+        <div v-if="shareListLoading" style="text-align: center; padding: 20px;">加载中...</div>
+        <div v-else-if="!shareList.length" style="text-align: center; padding: 20px; color: #999;">
+          暂无分享记录（需在 Pages 绑定 SHARE_KV 后创建的分享才会显示在这里）
+        </div>
+        <ul v-else class="share-list" style="list-style: none; margin: 0; padding: 0;">
+          <li v-for="sh in shareList" :key="sh.key"
+            style="display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #eee;">
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
+                :title="sh.path" v-text="sh.path"></div>
+              <div style="font-size: 12px; color: #999;">
+                到期：<span v-text="new Date(sh.exp * 1000).toLocaleString()"></span>
+              </div>
+            </div>
+            <button class="circle" style="padding: 4px 10px;" @click="copyShare(sh)">复制链接</button>
+            <button class="circle" style="padding: 4px 10px; color: red;" @click="revokeShare(sh)">撤销</button>
+          </li>
+        </ul>
+      </div>
+    </Dialog>
     <div style="flex:1"></div>
     <Footer />
   </div>
@@ -212,6 +235,9 @@ export default {
     search: "",
     showContextMenu: false,
     showMenu: false,
+    showShareManager: false,
+    shareList: [],
+    shareListLoading: false,
     showUploadPopup: false,
     uploadProgress: null,
     uploadQueue: [],
@@ -250,6 +276,43 @@ export default {
       let bin = "";
       bytes.forEach((b) => (bin += String.fromCharCode(b)));
       return "Basic " + btoa(bin);
+    },
+
+    async openShareManager() {
+      this.showShareManager = true;
+      this.shareListLoading = true;
+      try {
+        const res = await axios.get("/api/share/", { params: { list: 1 } });
+        this.shareList = res.data.shares || [];
+      } catch (error) {
+        this.shareList = [];
+        window.alert(
+          error.response && error.response.status === 500
+            ? "未绑定 SHARE_KV，无法管理分享（去 Pages 设置绑定 KV 命名空间）"
+            : "获取分享列表失败"
+        );
+      }
+      this.shareListLoading = false;
+    },
+
+    copyShare(sh) {
+      const url = new URL(
+        `/share.html?p=${encodeURIComponent(sh.path)}&e=${sh.exp}&s=${sh.sign}&id=${sh.id}`,
+        window.location.origin
+      );
+      navigator.clipboard.writeText(url.toString());
+      window.alert("分享链接已复制到剪贴板");
+    },
+
+    async revokeShare(sh) {
+      if (!window.confirm(`撤销「${sh.path}」的分享？撤销后该链接立即失效`)) return;
+      try {
+        await axios.get("/api/share/", { params: { revoke: 1, key: sh.key } });
+        this.shareList = this.shareList.filter((x) => x.key !== sh.key);
+        window.alert("已撤销，链接立即失效");
+      } catch (error) {
+        window.alert("撤销失败");
+      }
     },
 
     async makeShareLink(key) {
@@ -380,6 +443,9 @@ export default {
           break;
         case "粘贴文件到网盘":
           return this.pasteFile();
+        case "我的分享":
+          this.showMenu = false;
+          return this.openShareManager();
       }
       this.sortFiles();
     },

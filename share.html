@@ -135,7 +135,10 @@
           return;
         }
         const pw = passwordEl.value || "";
-        const rawUrl = `/raw/${p}?e=${e}&s=${s}&pw=${encodeURIComponent(pw)}`;
+        const id = params.get("id");
+        const rawUrl =
+          `/raw/${p}?e=${e}&s=${s}&pw=${encodeURIComponent(pw)}` +
+          (id ? `&id=${id}` : "");
         btn.disabled = true;
         msgEl.textContent = "验证中...";
         msgEl.className = "msg";
