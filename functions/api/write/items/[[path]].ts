@@ -1,5 +1,11 @@
 import { notFound, parseBucketPath } from "@/utils/bucket";
-import {get_auth_status} from "@/utils/auth";
+import { can_access_path, get_auth_status } from "@/utils/auth";
+
+function unauthorized() {
+  const header = new Headers();
+  header.set("WWW-Authenticate", 'Basic realm="需要登录"');
+  return new Response("没有操作权限", { status: 401, headers: header });
+}
 
 export async function onRequestPostCreateMultipart(context) {
   const [bucket, path] = parseBucketPath(context);
@@ -48,6 +54,9 @@ export async function onRequestPostCompleteMultipart(context) {
 }
 
 export async function onRequestPost(context) {
+  // 补上原先缺失的鉴权：分片上传的创建/完成也必须校验路径权限
+  if (!get_auth_status(context)) return unauthorized();
+
   const url = new URL(context.request.url);
   const searchParams = new URLSearchParams(url.search);
 
@@ -90,13 +99,8 @@ export async function onRequestPutMultipart(context) {
 
 export async function onRequestPut(context) {
   if(!get_auth_status(context)){
-    var header = new Headers()
-    header.set("WWW-Authenticate",'Basic realm="需要登录"')
-    return new Response("没有操作权限", {
-        status: 401,
-        headers: header,
-    });
-   }
+    return unauthorized();
+  }
   const url = new URL(context.request.url);
 
   if (new URLSearchParams(url.search).has("uploadId")) {
@@ -112,10 +116,13 @@ export async function onRequestPut(context) {
   const customMetadata: Record<string, string> = {};
 
   if (request.headers.has("x-amz-copy-source")) {
+    // 复制操作：源路径与目标路径都要有权限，防止把无权读取的文件复制到自己的目录
     const sourceName = decodeURIComponent(
       request.headers.get("x-amz-copy-source")
     );
+    if (!can_access_path(context, sourceName)) return unauthorized();
     const source = await bucket.get(sourceName);
+    if (!source) return new Response("源文件不存在", { status: 404 });
     content = source.body;
     if (source.customMetadata.thumbnail)
       customMetadata.thumbnail = source.customMetadata.thumbnail;
@@ -133,13 +140,8 @@ export async function onRequestPut(context) {
 
 export async function onRequestDelete(context) {
   if(!get_auth_status(context)){
-    var header = new Headers()
-    header.set("WWW-Authenticate",'Basic realm="需要登录"')
-    return new Response("没有操作权限", {
-        status: 401,
-        headers: header,
-    });
-   }
+    return unauthorized();
+  }
   const [bucket, path] = parseBucketPath(context);
   if (!bucket) return notFound();
 

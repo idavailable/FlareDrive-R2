@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>文件分享 - FlareDrive</title>
+    <link rel="icon" href="/favicon.ico" />
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: linear-gradient(135deg, #e0eaff 0%, #f5f7fa 100%);
+        padding: 16px;
+      }
+      .card {
+        width: 100%;
+        max-width: 400px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        padding: 32px 28px;
+        text-align: center;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 16px;
+        color: #2c2c2c;
+      }
+      .filename {
+        font-size: 14px;
+        color: #555;
+        word-break: break-all;
+        background: #f5f6f8;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+      }
+      .expire {
+        font-size: 12px;
+        color: #999;
+        margin-bottom: 20px;
+      }
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 14px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        outline: none;
+        margin-bottom: 12px;
+      }
+      input:focus {
+        border-color: #7aa7ff;
+      }
+      button {
+        width: 100%;
+        padding: 11px 0;
+        font-size: 15px;
+        color: #fff;
+        background: #4a7dff;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover {
+        background: #3a6bef;
+      }
+      button:disabled {
+        background: #a9bbf0;
+        cursor: not-allowed;
+      }
+      .msg {
+        font-size: 13px;
+        margin-top: 12px;
+        min-height: 18px;
+      }
+      .msg.error {
+        color: #d33;
+      }
+      .msg.ok {
+        color: #2a2;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>📤 文件分享</h1>
+      <div class="filename" id="filename">加载中...</div>
+      <div class="expire" id="expire"></div>
+      <input
+        id="password"
+        type="password"
+        placeholder="分享密码（无密码分享可留空）"
+        autocomplete="off"
+      />
+      <button id="btn">下载 / 打开文件</button>
+      <div class="msg" id="msg"></div>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const p = params.get("p");
+      const e = params.get("e");
+      const s = params.get("s");
+
+      const filenameEl = document.getElementById("filename");
+      const expireEl = document.getElementById("expire");
+      const msgEl = document.getElementById("msg");
+      const btn = document.getElementById("btn");
+      const passwordEl = document.getElementById("password");
+
+      try {
+        filenameEl.textContent = decodeURIComponent(p || "") || "未知文件";
+      } catch (err) {
+        filenameEl.textContent = p || "未知文件";
+      }
+      if (e && !isNaN(+e)) {
+        expireEl.textContent = "有效期至：" + new Date(+e * 1000).toLocaleString();
+      }
+      passwordEl.focus();
+
+      btn.onclick = async () => {
+        if (!p || !e || !s) {
+          msgEl.textContent = "链接不完整，请确认分享地址";
+          msgEl.className = "msg error";
+          return;
+        }
+        const pw = passwordEl.value || "";
+        const rawUrl = `/raw/${p}?e=${e}&s=${s}&pw=${encodeURIComponent(pw)}`;
+        btn.disabled = true;
+        msgEl.textContent = "验证中...";
+        msgEl.className = "msg";
+        try {
+          // 先用一个 1 字节的 Range 请求验密码，通过后再整文件跳转
+          const res = await fetch(rawUrl, {
+            headers: { Range: "bytes=0-0" },
+          });
+          if (res.ok) {
+            msgEl.textContent = "验证通过，正在打开文件...";
+            msgEl.className = "msg ok";
+            window.location.href = rawUrl;
+          } else {
+            msgEl.textContent = "密码错误或链接已过期";
+            msgEl.className = "msg error";
+            btn.disabled = false;
+          }
+        } catch (err) {
+          msgEl.textContent = "网络错误，请重试";
+          msgEl.className = "msg error";
+          btn.disabled = false;
+        }
+      };
+
+      passwordEl.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") btn.click();
+      });
+    </script>
+  </body>
+</html>

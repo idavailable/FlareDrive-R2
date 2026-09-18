@@ -27,15 +27,9 @@ FlareDrive-R2 是基于 Cloudflare R2 + Workers 构建的在线网盘系统，�
 
    ![QQ_1744351903148](docs/create-bucket.png)
 
-2. 创建完成后，点开设置页面，在存储桶设置中启用「公开访问」
+2. **无需开启「公开访问」（r2.dev）**。新版下载直接走 R2 绑定，不开公开访问更安全——否则任何知道 `pub-xxx.r2.dev` 地址的人可以绕过网盘的所有权限直接下载整个桶。
 
-   ![QQ_1744352059947](docs/r2.dev.png)
-
-3. 复制“公共存储桶 URL”，格式如下：
-
-```txt
-https://pub-kdsjfhlasnwiuweia4387rfho85tnof4.r2.dev
-```
+   > 如果你以前开启过公开访问，建议在存储桶设置里关掉。
 
 ### 2. 部署 Pages 服务
 
@@ -52,9 +46,9 @@ https://pub-kdsjfhlasnwiuweia4387rfho85tnof4.r2.dev
 
 | 变量名         | 示例值                                                | 是否必要 | 说明                                           |
 | -------------- | ----------------------------------------------------- | -------- | ---------------------------------------------- |
-| `PUBURL`       | `https://pub-kdsjfhlasnwiuweia4387rfho85tnof4.r2.dev` | ✅ 必填   | R2 公共存储桶地址                              |
-| `admin:123456` | `*`                                                   | ✅ 必填   | 管理员账号，格式为 `用户名:密码`               |
-| `GUEST`        | `public/`                                             | ❌ 可选   | 游客写入的默认目录                             |
+| `admin:123456` | `*`                                                   | ✅ 必填   | 管理员账号，格式为 `用户名:密码`（allowlist 为 `*`） |
+| `GUEST`        | `public/`                                             | ❌ 可选   | 游客可读写的默认目录                             |
+| `SHARE_SECRET` | 任意随机长字符串                                       | ❌ 可选   | 分享链接签名密钥；不设置时自动使用管理员凭据变量名作为密钥 |
 | `user1:123456` | `user1/,shared/`                                      | ❌ 可选   | 普通用户及其可写入目录，支持多个目录，格式一致 |
 
 <p style="color: red !important; font-weight: bold;">

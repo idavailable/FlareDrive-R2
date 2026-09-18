@@ -18,9 +18,13 @@ export async function onRequestGet(context) {
       return new Response("没有读取权限", { status: 401, headers });
     }
 
+    const url = new URL(context.request.url);
+    const cursor = url.searchParams.get("cursor") || undefined;
+
     const objList = await bucket.list({
       prefix,
       delimiter: "/",
+      cursor,
       include: ["httpMetadata", "customMetadata"],
     });
     let objKeys = objList.objects
@@ -45,9 +49,17 @@ export async function onRequestGet(context) {
       }
     }
 
-    return new Response(JSON.stringify({ value: objKeys, folders }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        value: objKeys,
+        folders,
+        truncated: objList.truncated,
+        cursor: objList.truncated ? objList.cursor : null,
+      }),
+      {
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   } catch (e) {
     return new Response(e.toString(), { status: 500 });
   }

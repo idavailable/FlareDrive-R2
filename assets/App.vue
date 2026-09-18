@@ -171,6 +171,11 @@
           </button>
         </li>
         <li>
+          <button @click="makeShareLink(focusedItem.key)">
+            <span>生成分享链接</span>
+          </button>
+        </li>
+        <li>
           <button style="color: red" @click="removeFile(focusedItem.key)">
             <span>删除</span>
           </button>
@@ -239,6 +244,34 @@ export default {
       navigator.clipboard.writeText(url.toString());
     },
 
+    async makeShareLink(key) {
+      const days = window.prompt(
+        "分享有效期（天，支持小数，如 0.5 表示 12 小时）:",
+        "7"
+      );
+      if (days === null) return;
+      const password = window.prompt("分享密码（直接确定则无需密码）:", "");
+      if (password === null) return;
+      try {
+        const res = await axios.get("/api/share/", {
+          params: { path: key, days: days || "7", password: password || "" },
+        });
+        const url = new URL(res.data.url, window.location.origin);
+        await navigator.clipboard.writeText(url.toString());
+        window.alert(
+          `分享链接已复制到剪贴板（有效期 ${days || 7} 天${
+            password ? "，需密码" : "，无需密码"
+          }）：\n${url.toString()}`
+        );
+      } catch (error) {
+        if (error.response && error.response.status === 401) {
+          window.alert("请先登录后再生成分享链接");
+        } else {
+          window.alert("生成分享链接失败");
+        }
+      }
+    },
+
     async copyPaste(source, target) {
       const uploadUrl = `/api/write/items/${target}`;
       await axios.put(uploadUrl, "", {
@@ -255,11 +288,7 @@ export default {
         await axios.put(uploadUrl, "");
         this.fetchFiles();
       } catch (error) {
-        fetch("/api/write/")
-          .then((value) => {
-            if (value.redirected) window.location.href = value.url;
-          })
-          .catch(() => { });
+        window.alert("创建文件夹失败，请检查是否已登录以及目录权限");
         console.log(`Create folder failed`);
       }
     },
@@ -279,16 +308,20 @@ export default {
         .then((files) => {
           if (!files) return;
           this.files = files.value;
-          if (this.order) {
-            this.files.sort((a, b) => {
-              if (this.order === "size") {
-                return b.size - a.size;
-              }
-            });
-          }
+          this.sortFiles();
           this.folders = files.folders;
           this.loading = false;
         });
+    },
+
+    sortFiles() {
+      if (this.order === "大小↑") {
+        this.files.sort((a, b) => a.size - b.size);
+      } else if (this.order === "大小↓") {
+        this.files.sort((a, b) => b.size - a.size);
+      } else {
+        this.files.sort((a, b) => a.key.localeCompare(b.key));
+      }
     },
 
     formatSize(size) {
@@ -325,15 +358,7 @@ export default {
         case "粘贴文件到网盘":
           return this.pasteFile();
       }
-      this.files.sort((a, b) => {
-        if (this.order === "大小↑") {
-          return a.size - b.size;
-        } else if (this.order === "大小↓") {
-          return b.size - a.size;
-        } else {
-          return a.key.localeCompare(b.key);
-        }
-      });
+      this.sortFiles();
     },
 
     onUploadClicked(fileElement) {
@@ -364,7 +389,7 @@ export default {
       }
 
       /** @type File **/
-      const { basedir, file } = this.uploadQueue.pop(0);
+      const { basedir, file } = this.uploadQueue.shift();
       let thumbnailDigest = null;
 
       if (file.type.startsWith("image/") || file.type === "video/mp4") {
@@ -377,12 +402,7 @@ export default {
             await axios.put(thumbnailUploadUrl, thumbnailBlob);
             thumbnailDigest = digestHex;
           } catch (error) {
-            fetch("/api/write/")
-              .then((value) => {
-                if (value.redirected) window.location.href = value.url;
-              })
-              .catch(() => { });
-            console.log(`Upload ${digestHex}.png failed`);
+            console.log(`Upload ${digestHex}.png failed（无权限时缩略图跳过）`);
           }
         } catch (error) {
           console.log(`Generate thumbnail failed`);
@@ -407,11 +427,7 @@ export default {
           await axios.put(uploadUrl, file, { headers, onUploadProgress });
         }
       } catch (error) {
-        fetch("/api/write/")
-          .then((value) => {
-            if (value.redirected) window.location.href = value.url;
-          })
-          .catch(() => { });
+        window.alert(`上传 ${file.name} 失败，请检查是否已登录以及目录权限`);
         console.log(`Upload ${file.name} failed`, error);
       }
       setTimeout(this.processUploadQueue);
@@ -542,15 +558,15 @@ export default {
       }
     },
 
-    // 新增：递归获取目录下所有文件和子目录
+    // 递归获取目录下所有文件和子目录（children API 以 cursor 分页）
     async getAllItems(prefix) {
       const items = [];
-      let marker = null;
+      let cursor = null;
 
       do {
         const url = new URL(`/api/children/${prefix}`, window.location.origin);
-        if (marker) {
-          url.searchParams.set('marker', marker);
+        if (cursor) {
+          url.searchParams.set('cursor', cursor);
         }
 
         const response = await fetch(url);
@@ -573,8 +589,8 @@ export default {
           items.push(...subItems);
         }
 
-        marker = data.marker;
-      } while (marker);
+        cursor = data.cursor;
+      } while (cursor);
 
       return items;
     },
