@@ -3,48 +3,39 @@ import { can_access_path } from "@/utils/auth";
 import { verify_share } from "@/utils/share";
 
 // 解析 "bytes=start-end" 形式的 Range 头，返回 R2 get 的 range 选项
-// 支持 bytes=a-b / bytes=a- / bytes=-N；开放/后缀式需知道文件大小，用 head 查询，
-// 这样 Content-Range 的总长度始终准确
+// 支持 bytes=a-b / bytes=a- / bytes=-N；全部先 head 拿真实大小，
+// 避免 0 字节文件、起点越界等边界情况触发 R2 异常
 async function getRangeOption(bucket, key, rangeHeader) {
-  if (!rangeHeader) return { range: null, partial: false };
+  if (!rangeHeader) return { range: null, partial: false, size: null };
   const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
-  if (!match) return { range: null, partial: false };
+  if (!match) return { range: null, partial: false, size: null };
   const [, startStr, endStr] = match;
-  if (startStr === "" && endStr === "") return { range: null, partial: false };
+  if (startStr === "" && endStr === "")
+    return { range: null, partial: false, size: null };
 
+  const head = await bucket.head(key);
+  if (!head) return { range: null, partial: false, size: null };
+  const size = head.size;
+
+  let offset;
+  let length;
   if (startStr === "") {
     // 后缀式：取末尾 N 字节
-    const head = await bucket.head(key);
-    if (!head) return { range: null, partial: false };
-    const length = Math.min(parseInt(endStr), head.size);
-    if (length <= 0) return { range: null, partial: false };
-    return {
-      range: { offset: head.size - length, length },
-      partial: true,
-      size: head.size,
-    };
+    length = Math.min(parseInt(endStr), size);
+    if (length <= 0) return { range: null, partial: false, size };
+    offset = size - length;
+  } else {
+    offset = parseInt(startStr);
+    // 起点越界：按规范应回 416
+    if (offset >= size) return { range: null, partial: false, size, unsatisfiable: true };
+    if (endStr === "") {
+      length = size - offset;
+    } else {
+      length = Math.min(parseInt(endStr) - offset + 1, size - offset);
+      if (length <= 0) return { range: null, partial: false, size };
+    }
   }
-
-  const offset = parseInt(startStr);
-  if (endStr === "") {
-    // 开放式：从 offset 到文件末尾
-    const head = await bucket.head(key);
-    if (!head || offset >= head.size) return { range: null, partial: false };
-    return {
-      range: { offset, length: head.size - offset },
-      partial: true,
-      size: head.size,
-    };
-  }
-  const length = parseInt(endStr) - offset + 1;
-  if (offset < 0 || length <= 0) return { range: null, partial: false };
-  const head = await bucket.head(key);
-  if (!head) return { range: null, partial: false };
-  return {
-    range: { offset, length: Math.min(length, head.size - offset) },
-    partial: true,
-    size: head.size,
-  };
+  return { range: { offset, length }, partial: true, size };
 }
 
 export async function onRequestGet(context) {
@@ -69,11 +60,19 @@ export async function onRequestGet(context) {
   // 1. 不会把 Authorization/Cookie 等请求头带给第三方
   // 2. 存储桶无需开启公开访问，避免知道 pub-xxx.r2.dev 就绕过所有权限
   // 3. 支持 Range 请求（视频拖动、断点续传）
-  const { range, partial, size } = await getRangeOption(
+  const { range, partial, size, unsatisfiable } = await getRangeOption(
     bucket,
     path,
     context.request.headers.get("Range")
   );
+
+  if (unsatisfiable) {
+    return new Response("请求范围不满足", {
+      status: 416,
+      headers: { "Content-Range": `bytes */${size}` },
+    });
+  }
+
   const object = await bucket.get(
     path,
     range ? { range } : {}
@@ -104,3 +103,6 @@ export async function onRequestGet(context) {
     statusText: partial && range ? "Partial Content" : "OK",
   });
 }
+
+// HEAD 请求（下载器/播放器探测用）与 GET 共用处理，响应体由运行时自动丢弃
+export const onRequestHead = onRequestGet;

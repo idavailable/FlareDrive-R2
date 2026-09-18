@@ -117,10 +117,28 @@ export async function onRequestPut(context) {
 
   if (request.headers.has("x-amz-copy-source")) {
     // 复制操作：源路径与目标路径都要有权限，防止把无权读取的文件复制到自己的目录
-    const sourceName = decodeURIComponent(
-      request.headers.get("x-amz-copy-source")
-    );
+    let sourceName;
+    try {
+      sourceName = decodeURIComponent(request.headers.get("x-amz-copy-source"));
+    } catch (e) {
+      return new Response("copy-source 编码无效", { status: 400 });
+    }
     if (!can_access_path(context, sourceName)) return unauthorized();
+
+    // 优先用 R2 服务端复制（不把文件流过 Worker，大文件更快也不受内存/CPU 限制）
+    try {
+      await bucket.copy(path, sourceName);
+      const copied = await bucket.head(path);
+      if (copied) {
+        const { key, size, uploaded } = copied;
+        return new Response(JSON.stringify({ key, size, uploaded }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    } catch (e) {
+      // 运行时不支持 bucket.copy 时退回流式复制
+    }
+
     const source = await bucket.get(sourceName);
     if (!source) return new Response("源文件不存在", { status: 404 });
     content = source.body;

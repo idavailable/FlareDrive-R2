@@ -281,18 +281,44 @@ export default {
     async openShareManager() {
       this.showShareManager = true;
       this.shareListLoading = true;
+      const load = () => axios.get("/api/share/", { params: { list: 1 } });
       try {
-        const res = await axios.get("/api/share/", { params: { list: 1 } });
+        let res;
+        try {
+          res = await load();
+        } catch (error) {
+          // 与生成分享相同的浏览器凭据路径范围问题：401 时补输账号后重试一次
+          if (
+            error.response &&
+            error.response.status === 401 &&
+            this.recoverAuth()
+          ) {
+            res = await load();
+          } else {
+            throw error;
+          }
+        }
         this.shareList = res.data.shares || [];
       } catch (error) {
         this.shareList = [];
         window.alert(
           error.response && error.response.status === 500
             ? "未绑定 SHARE_KV，无法管理分享（去 Pages 设置绑定 KV 命名空间）"
-            : "获取分享列表失败"
+            : "获取分享列表失败（未登录或网络错误）"
         );
       }
       this.shareListLoading = false;
+    },
+
+    // 401 时补输账号（格式 用户名:密码），写入 axios 默认头与 localStorage
+    recoverAuth() {
+      const account =
+        window.prompt("检测到登录状态失效，请输入账号（格式：用户名:密码）:", "") || "";
+      if (!account) return false;
+      const header = this.basicHeader(account);
+      axios.defaults.headers.common["Authorization"] = header;
+      localStorage.setItem("fd_auth", header);
+      return true;
     },
 
     copyShare(sh) {
@@ -306,12 +332,30 @@ export default {
 
     async revokeShare(sh) {
       if (!window.confirm(`撤销「${sh.path}」的分享？撤销后该链接立即失效`)) return;
+      const revoke = () =>
+        axios.get("/api/share/", { params: { revoke: 1, key: sh.key } });
       try {
-        await axios.get("/api/share/", { params: { revoke: 1, key: sh.key } });
+        try {
+          await revoke();
+        } catch (error) {
+          if (
+            error.response &&
+            error.response.status === 401 &&
+            this.recoverAuth()
+          ) {
+            await revoke();
+          } else {
+            throw error;
+          }
+        }
         this.shareList = this.shareList.filter((x) => x.key !== sh.key);
         window.alert("已撤销，链接立即失效");
       } catch (error) {
-        window.alert("撤销失败");
+        window.alert(
+          error.response && error.response.status === 401
+            ? "账号错误，格式应为：用户名:密码"
+            : "撤销失败"
+        );
       }
     },
 
@@ -334,12 +378,14 @@ export default {
         } catch (error) {
           // 浏览器缓存的 Basic 凭据按路径范围携带，可能覆盖不到 /api/share/，
           // 401 时让用户补一次账号，显式加到请求头并存入 localStorage
-          if (!(error.response && error.response.status === 401)) throw error;
-          const account =
-            window.prompt("检测到登录状态失效，请输入账号（格式：用户名:密码）:", "") || "";
-          if (!account) return;
-          axios.defaults.headers.common["Authorization"] = this.basicHeader(account);
-          localStorage.setItem("fd_auth", this.basicHeader(account));
+          if (
+            !(
+              error.response &&
+              error.response.status === 401 &&
+              this.recoverAuth()
+            )
+          )
+            throw error;
           res = await doRequest();
         }
         const url = new URL(res.data.url, window.location.origin);
@@ -466,7 +512,12 @@ export default {
       let newName = window.prompt("Rename to:");
       if (newName === null) return;
       if (newName === "") newName = this.clipboard.split("/").pop();
-      await this.copyPaste(this.clipboard, `${this.cwd}${newName}`);
+      try {
+        await this.copyPaste(this.clipboard, `${this.cwd}${newName}`);
+      } catch (error) {
+        window.alert("粘贴失败，请检查是否已登录以及目录权限");
+        return;
+      }
       this.fetchFiles();
     },
 
@@ -531,8 +582,13 @@ export default {
     async renameFile(key) {
       const newName = window.prompt("重命名为:");
       if (!newName) return;
-      await this.copyPaste(key, `${this.cwd}${newName}`);
-      await axios.delete(`/api/write/items/${key}`);
+      try {
+        await this.copyPaste(key, `${this.cwd}${newName}`);
+        await axios.delete(`/api/write/items/${key}`);
+      } catch (error) {
+        window.alert("重命名失败，请检查是否已登录以及目录权限");
+        return;
+      }
       this.fetchFiles();
     },
 
@@ -685,10 +741,11 @@ export default {
     },
 
     uploadFiles(files) {
-      if (this.cwd && !this.cwd.endsWith("/")) this.cwd += "/";
-
+      // 不直接改 this.cwd（会触发 watcher 重复拉取列表），仅在本次上传任务内补斜杠
+      const basedir =
+        this.cwd && !this.cwd.endsWith("/") ? `${this.cwd}/` : this.cwd;
       const uploadTasks = Array.from(files).map((file) => ({
-        basedir: this.cwd,
+        basedir,
         file,
       }));
       this.uploadQueue.push(...uploadTasks);
