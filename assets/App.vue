@@ -244,6 +244,14 @@ export default {
       navigator.clipboard.writeText(url.toString());
     },
 
+    // 账号(格式 用户名:密码)转 Basic 认证头，支持非 ASCII 密码
+    basicHeader(account) {
+      const bytes = new TextEncoder().encode(account);
+      let bin = "";
+      bytes.forEach((b) => (bin += String.fromCharCode(b)));
+      return "Basic " + btoa(bin);
+    },
+
     async makeShareLink(key) {
       const days = window.prompt(
         "分享有效期（天，支持小数，如 0.5 表示 12 小时）:",
@@ -252,10 +260,25 @@ export default {
       if (days === null) return;
       const password = window.prompt("分享密码（直接确定则无需密码）:", "");
       if (password === null) return;
-      try {
-        const res = await axios.get("/api/share/", {
+      const doRequest = () =>
+        axios.get("/api/share/", {
           params: { path: key, days: days || "7", password: password || "" },
         });
+      try {
+        let res;
+        try {
+          res = await doRequest();
+        } catch (error) {
+          // 浏览器缓存的 Basic 凭据按路径范围携带，可能覆盖不到 /api/share/，
+          // 401 时让用户补一次账号，显式加到请求头并存入 localStorage
+          if (!(error.response && error.response.status === 401)) throw error;
+          const account =
+            window.prompt("检测到登录状态失效，请输入账号（格式：用户名:密码）:", "") || "";
+          if (!account) return;
+          axios.defaults.headers.common["Authorization"] = this.basicHeader(account);
+          localStorage.setItem("fd_auth", this.basicHeader(account));
+          res = await doRequest();
+        }
         const url = new URL(res.data.url, window.location.origin);
         await navigator.clipboard.writeText(url.toString());
         window.alert(
@@ -265,7 +288,7 @@ export default {
         );
       } catch (error) {
         if (error.response && error.response.status === 401) {
-          window.alert("请先登录后再生成分享链接");
+          window.alert("账号错误，格式应为：用户名:密码");
         } else {
           window.alert("生成分享链接失败");
         }
@@ -627,6 +650,9 @@ export default {
   },
 
   created() {
+    // 恢复上次手动输入的登录凭据（避免浏览器凭据路径范围问题）
+    const savedAuth = localStorage.getItem("fd_auth");
+    if (savedAuth) axios.defaults.headers.common["Authorization"] = savedAuth;
     window.addEventListener("popstate", (ev) => {
       const searchParams = new URL(window.location).searchParams;
       if (searchParams.get("p") !== this.cwd)
