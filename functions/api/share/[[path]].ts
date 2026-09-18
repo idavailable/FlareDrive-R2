@@ -1,4 +1,5 @@
 import { make_share_sign } from "@/utils/share";
+import { account_exists } from "@/utils/auth";
 
 // 生成分享链接（需登录）：
 //   GET /api/share/?path=文件key&days=有效期天数&password=可选密码
@@ -8,9 +9,13 @@ export async function onRequestGet(context) {
   const authorization = context.request.headers.get("Authorization");
   let account = null;
   if (authorization && authorization.startsWith("Basic ")) {
-    account = atob(authorization.split("Basic ")[1]);
+    try {
+      account = atob(authorization.split("Basic ")[1]);
+    } catch (e) {
+      account = null;
+    }
   }
-  if (!account || !context.env[account]) {
+  if (!account || !account_exists(context, account)) {
     return new Response("需要登录后才能生成分享链接", { status: 401 });
   }
 
